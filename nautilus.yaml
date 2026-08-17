@@ -1,0 +1,54 @@
+# wk02's heated tank — the same plant as examples/heated-tank, with the
+# control program in ST and the physics from examples/heated-tank-nogo's
+# sim task. Two scans, one tag store.
+name: wk14-tank
+
+server:
+  addr: "localhost:8080"   # NAUTILUS_ADDR overrides; the recipes always do
+  online-edits: true       # beat 6 downloads the alarm to the running scan
+
+tasks:
+  - program: program.st    # the control loop — pump latch + heater PI
+    scan: 100ms
+    dt-tag: ScanDtS
+  - name: sim              # the plant, simulated in IEC
+    program: sim.st
+    scan: 100ms
+    dt-tag: SimDtS
+  - name: interlocks       # the annunciator, in ladder
+    program: interlocks.ld
+    scan: 200ms
+
+tags:
+  # process values — owned by the sim task
+  - { name: LevelPct,    role: state, init: 60.0, unit: "%",   desc: "Tank level" }
+  - { name: TempC,       role: state, init: 60.0, unit: "°C",  desc: "Tank temperature" }
+  - { name: FT101,       role: state, init: 0.0,  unit: "L/s", desc: "Tank inflow (pump)" }
+  - { name: FT102,       role: state, init: 0.0,  unit: "L/s", desc: "Tank outflow (demand)" }
+  - { name: DV101,       role: state, init: 60.0, unit: "%",   desc: "Demand valve position" }
+  - { name: SupplyTempC, role: state, init: 50.0, unit: "°C",  desc: "Inlet supply temperature" }
+  - { name: HeaterKw,    role: state, init: 0.0,  unit: "kW",  desc: "Heater electrical power" }
+
+  # operator setpoints
+  - { name: TempSP,         role: setpoint, init: 65.0, unit: "°C", desc: "Temperature setpoint" }
+  - { name: Kp,             role: setpoint, init: 12.0,             desc: "TIC-101 proportional gain" }
+  - { name: Ki,             role: setpoint, init: 0.15,             desc: "TIC-101 integral gain" }
+  - { name: PumpStartLevel, role: setpoint, init: 40.0, unit: "%",  desc: "P-101 start level" }
+  - { name: PumpStopLevel,  role: setpoint, init: 75.0, unit: "%",  desc: "P-101 stop level" }
+  - { name: Demand,         role: setpoint, init: 60.0, unit: "%",  desc: "Downstream demand valve command" }
+
+  # the hi-temp alarm — DECLARED, BOUND NOWHERE. Beat 6 writes the program
+  # that binds them; until then they are what completion inside VAR_EXTERNAL
+  # is for. Thresholds are tags, mirroring the pump band above.
+  - { name: HiTempSP,    role: setpoint, init: 68.0, unit: "°C", desc: "High temperature alarm trip" }
+  - { name: HiTempClrSP, role: setpoint, init: 63.0, unit: "°C", desc: "High temperature alarm clear — the deadband" }
+  - { name: HiTempAlm,   role: state,    init: false,            desc: "High temperature alarm (hysteresis latch)" }
+
+  # the annunciator — owned by interlocks.ld (the alarm itself is AH-101's)
+  - { name: TempLowAlm, role: state,    init: false, desc: "Low temperature alarm (reserved — nothing drives it yet)" }
+  - { name: HornAck,    role: setpoint, init: false, desc: "Horn acknowledge — releases itself when the alarms clear" }
+  - { name: Horn,       role: state,    init: false, desc: "Annunciator horn (interlocks.ld)" }
+
+  # field outputs — owned by program.st
+  - { name: PumpRun, role: output, init: false,          desc: "P-101 pump run command" }
+  - { name: Heater,  role: output, init: 0.0, unit: "%", desc: "TIC-101 heater output" }

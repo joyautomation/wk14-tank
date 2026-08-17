@@ -1,0 +1,81 @@
+# Acceptance tests for the tank — the CI gate for its control logic.
+#
+#   nautilus test        run them
+#   nautilus test -v     with the virtual time each test covered
+#
+# The fixture is nautilus.yaml: tasks, scan rates, tag roles and seeds all
+# come from the manifest that deploys, so a test can never drift away from
+# what actually runs. Time is virtual — the horn's 2-second grace and the
+# loop's minutes-long settle are asserted exactly, in milliseconds.
+
+tolerance: 0.5 # default ± for `near` in this file
+
+tests:
+  - name: pump seals in below the start level and drops out above it
+    suspend: [sim] # the level is driven by this test, not the plant
+    steps:
+      - given: { LevelPct: 35.0 }
+        scans: 1
+        expect: { PumpRun: true }
+      - given: { LevelPct: 60.0 } # between the bands — the seal-in holds
+        scans: 1
+        expect: { PumpRun: true }
+      - given: { LevelPct: 80.0 }
+        scans: 1
+        expect: { PumpRun: false }
+
+  - name: high-temp alarm trips, holds through the deadband, and clears
+    # Week 2's on-camera proof, as a test: we moved the thresholds by hand
+    # and watched the pill. This is the same trajectory, asserted.
+    suspend: [sim]
+    steps:
+      - given: { TempC: 70.0 } # above the 68 trip
+        scans: 1
+        expect: { HiTempAlm: true }
+      - given: { TempC: 65.0 } # inside the deadband — the latch holds
+        scans: 1
+        expect: { HiTempAlm: true }
+      - given: { TempC: 62.0 } # below the 63 clear point
+        scans: 1
+        expect: { HiTempAlm: false }
+
+  - name: horn waits its full 2 s grace, and the ack releases itself
+    # Week 3's TON, on the 200 ms ladder task — a timer asserted exactly,
+    # which is the whole point of virtual time.
+    suspend: [sim]
+    given: { TempC: 70.0 } # alarm in from the first scan
+    steps:
+      - advance: 1.8s
+        expect: { Horn: false } # the TON has not elapsed
+      - advance: 600ms
+        expect: { Horn: true } # ... and now it has
+      - given: { HornAck: true }
+        advance: 400ms
+        expect:
+          Horn: false
+          HiTempAlm: true # acking the horn must not clear the alarm
+      - given: { TempC: 60.0 } # alarm clears -> the ack self-releases
+        advance: 1s
+        expect: { HiTempAlm: false, HornAck: false }
+
+  - name: PI settles a 65 to 72 C setpoint step and holds it
+    # Closed loop — sim.st integrates the plant while the PI runs, both on
+    # virtual dt. Demand is driven to zero so the level loop stays quiet:
+    # with the drain shut the pump never cycles, and the temperature loop
+    # is tested against the pure thermal plant (600 kg of water is slow —
+    # full heat moves it about a tenth of a degree per second, less once
+    # you subtract the tank's heat loss, so the step takes minutes of
+    # process time — and milliseconds of yours).
+    given: { Demand: 0.0, HiTempSP: 80.0 } # drain shut; the hot run sits
+      # above wk02's 68 C trip, so move it out of the way — like an operator
+      # would before a deliberate hot excursion
+    steps:
+      - until: 300s
+        expect: { TempC: { near: 65.0 } }
+      - given: { TempSP: 72.0 }
+        until: 300s
+        hold: 5s # settled, not merely passing through on the way up
+        expect:
+          - ABS(TempC - TempSP) < 0.5 # relational: tracks the setpoint tag
+        always:
+          Heater: { between: [0.0, 100.0] } # the clamp never breaks
