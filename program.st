@@ -36,7 +36,7 @@ END_IF;
 (* TIC-101: temperature PI with anti-windup clamp *)
 err := TempSP - TempC;
 integral := integral + Ki * err * ScanDtS;
-integral := LIMIT(0.0, integral, 100.0);
+integral := LIMIT(0.0, integral, 30.0);
 Heater := LIMIT(0.0, Kp * err + integral, 100.0);
 (* AH-101: high temperature alarm — a hysteresis latch, same idiom as P-101 *)
 IF TempC >= HiTempSP THEN
